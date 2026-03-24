@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FPV 定向訓練 - 機體強化版</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <style>
         body { margin: 0; background: #ffffff; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
@@ -23,52 +24,83 @@ let drone, targetMarker, timerText, scoreText, mask, startBtn, resultText;
 let timeLeft, score, isPlaying = false;
 let currentDroneAngle, currentRelativeDir;
 let wrongCount = 0;
+let emitter;
 
 function preload() {}
 
 function create() {
-    // 1. 繪製背景網格
+    // 1. 背景網格
     let graphics = this.add.graphics();
     graphics.lineStyle(1, 0xeeeeee);
     for(let i=0; i<640; i+=40) graphics.lineBetween(0,i,360,i);
     for(let i=0; i<360; i+=40) graphics.lineBetween(i,0,i,640);
 
-    // 2. 建立無人機容器
+    // 2. 粒子系統 (答對噴發)
+    const particleGraphic = this.make.graphics({x: 0, y: 0, add: false});
+    particleGraphic.fillStyle(0xffffff);
+    particleGraphic.fillRect(0, 0, 4, 4);
+    particleGraphic.generateTexture('particle', 4, 4);
+
+    emitter = this.add.particles(0, 0, 'particle', {
+        speed: { min: 80, max: 200 },
+        scale: { start: 1.5, end: 0 },
+        lifespan: 600,
+        tint: [0xd63031, 0x00b894, 0x0984e3, 0xfdcb6e],
+        emitting: false
+    });
+
+    // 3. 中央玩家無人機 (重新設計為無人機樣式)
     drone = this.add.container(180, 220);
-    const bodySize = 60; 
-    const propRadius = 10; 
-    const propOffset = bodySize / 2; 
+    const pOff = 30; // 槳葉偏移
+    const pRad = 15; // 槳葉半徑
 
-    let body = this.add.rectangle(0, 0, bodySize, bodySize, 0xecf0f1).setStrokeStyle(3, 0x2d3436);
-    let headPointer = this.add.triangle(10, -42, 0, -10, -10, 8, 10, 8, 0xd63031).setStrokeStyle(1, 0x000000);
-    let propFL = this.add.circle(-propOffset, -propOffset, propRadius, 0xd63031).setStrokeStyle(2, 0x000000); 
-    let propFR = this.add.circle(propOffset, -propOffset, propRadius, 0xd63031).setStrokeStyle(2, 0x000000);  
-    let propBL = this.add.circle(-propOffset, propOffset, propRadius, 0xffffff).setStrokeStyle(2, 0x000000); 
-    let propBR = this.add.circle(propOffset, propOffset, propRadius, 0xffffff).setStrokeStyle(2, 0x000000);  
+    // 繪製 X 型支架
+    let frameG = this.add.graphics();
+    frameG.lineStyle(4, 0x2d3436);
+    frameG.lineBetween(-pOff, -pOff, pOff, pOff);
+    frameG.lineBetween(-pOff, pOff, pOff, -pOff);
+    
+    // 中心機身圓塊
+    let centerBody = this.add.circle(0, 0, 15, 0xf8f9fa).setStrokeStyle(3, 0x2d3436);
+    
+    // 空心圓槳葉 (前紅後灰)
+    let propFL = this.add.circle(-pOff, -pOff, pRad).setStrokeStyle(3, 0xd63031);
+    let propFR = this.add.circle(pOff, -pOff, pRad).setStrokeStyle(3, 0xd63031);
+    let propBL = this.add.circle(-pOff, pOff, pRad).setStrokeStyle(3, 0xb2bec3);
+    let propBR = this.add.circle(pOff, pOff, pRad).setStrokeStyle(3, 0xb2bec3);
 
-    drone.add([body, headPointer, propFL, propFR, propBL, propBR]);
+    // 絕對座標機頭 (10, -42)
+    let head = this.add.triangle(10, -42, 0, -10, -10, 8, 10, 8, 0xd63031).setStrokeStyle(1, 0x000000);
 
-    // 3. 目標紅點
-    targetMarker = this.add.circle(0, -100, 15, 0xff0000).setStrokeStyle(2, 0x000000);
+    drone.add([frameG, centerBody, propFL, propFR, propBL, propBR, head]);
+
+    // 4. 旁邊目標物 (改為空心圓方框)
+    targetMarker = this.add.container(0, -120);
+    let targetBox = this.add.graphics();
+    targetBox.lineStyle(4, 0xd63031);
+    // 繪製圓角空心方框
+    targetBox.strokeRoundedRect(-20, -20, 40, 40, 8);
+    // 在中心加一個半透明小圓點作為感應核心
+    let targetCore = this.add.circle(0, 0, 4, 0xd63031, 0.5);
+    
+    targetMarker.add([targetBox, targetCore]);
     this.targetPivot = this.add.container(180, 220, [targetMarker]);
 
-    // 4. 文字介面
+    // 5. 文字介面
     const textStyle = { fontSize: '24px', color: '#000', fontStyle: 'bold', fontFamily: '微軟正黑體' };
     timerText = this.add.text(20, 20, '時間：30', textStyle);
     scoreText = this.add.text(220, 20, '過關：0/20', textStyle);
-
     this.add.text(180, 365, '▲ 為機頭朝向', { fontSize: '18px', color: '#636e72', fontStyle: 'bold' }).setOrigin(0.5);
 
-    // 5. 虛擬搖桿
+    // 6. 虛擬搖桿按鈕
     createButton(this, 180, 430, '前', 'up');
     createButton(this, 180, 540, '後', 'down');
     createButton(this, 80, 485, '左', 'left');
     createButton(this, 280, 485, '右', 'right');
 
-    // 6. 初始蒙版與按鈕
+    // 7. 遮罩與結算
     mask = this.add.rectangle(180, 320, 360, 640, 0xffffff, 0.95);
     resultText = this.add.text(180, 260, '', { fontSize: '24px', color: '#7f8c8d', fontStyle: 'bold', align: 'center' }).setOrigin(0.5).setVisible(false);
-    
     startBtn = this.add.text(180, 340, '開始練習', { 
         fontSize: '30px', color: '#fff', backgroundColor: '#d63031', padding: 20, borderRadius: 10, align: 'center' 
     }).setOrigin(0.5).setInteractive();
@@ -79,7 +111,11 @@ function create() {
 function createButton(scene, x, y, label, action) {
     let btn = scene.add.circle(x, y, 45, 0xecf0f1).setStrokeStyle(3, 0x2d3436).setInteractive();
     scene.add.text(x, y, label, { fontSize: '22px', color: '#2d3436', fontStyle: 'bold' }).setOrigin(0.5);
-    btn.on('pointerdown', () => { btn.setFillStyle(0xbdc3c7); checkAnswer.call(scene, action); });
+    btn.on('pointerdown', () => { 
+        btn.setFillStyle(0xbdc3c7); 
+        scene.tweens.add({ targets: btn, scale: 0.9, duration: 50, yoyo: true });
+        checkAnswer.call(scene, action); 
+    });
     btn.on('pointerup', () => btn.setFillStyle(0xecf0f1));
 }
 
@@ -102,34 +138,35 @@ function nextRound() {
 
 function checkAnswer(input) {
     if (!isPlaying) return;
-    let correct;
-    if (currentRelativeDir === 0) correct = 'up';
-    else if (currentRelativeDir === 90) correct = 'right';
-    else if (currentRelativeDir === 180) correct = 'down';
-    else if (currentRelativeDir === 270) correct = 'left';
+    let correct = ['up', 'right', 'down', 'left'][currentRelativeDir / 90];
 
     if (input === correct) {
         score++;
+        
+        // 命中：彩色粒子
+        let worldPos = targetMarker.getWorldTransformMatrix();
+        emitter.emitParticleAt(worldPos.tx, worldPos.ty, 20);
+
+        // 命中：目標方框縮放動畫
+        this.tweens.add({
+            targets: targetMarker,
+            scale: 1.5, alpha: 0.3, duration: 150, yoyo: true
+        });
+
         nextRound.call(this);
     } else {
         wrongCount++; 
-        // 扣 1 秒邏輯
         timeLeft = Math.max(0, timeLeft - 1); 
-        // 在時間旁邊跳出 -1
         showMinusOneAtTimer.call(this);
-
         if (navigator.vibrate) navigator.vibrate(200);
         this.cameras.main.shake(100, 0.01);
     }
 }
 
 function showMinusOneAtTimer() {
-    let minusText = this.add.text(125, 20, '-1', { fontSize: '28px', color: '#d63031', fontStyle: 'bold' });
-    this.tweens.add({
-        targets: minusText,
-        y: 0, alpha: 0, duration: 800,
-        onComplete: () => minusText.destroy()
-    });
+    let m1 = this.add.text(125, 20, '-1', { fontSize: '28px', color: '#d63031', fontStyle: 'bold' });
+    this.tweens.add({ targets: m1, y: 0, alpha: 0, duration: 800, onComplete: () => m1.destroy() });
+    
     this.tweens.add({
         targets: timerText,
         alpha: 0.5, duration: 50, yoyo: true,
@@ -150,12 +187,7 @@ function endGame(msg) {
     isPlaying = false;
     mask.setVisible(true);
     resultText.setText(`本次錯誤：${wrongCount} 次`).setVisible(true);
-    
-    // 在更新文字後，強制設定對齊方式與重新置中
-    startBtn.setText(`${msg}\n\n點擊重新開始`);
-    startBtn.setAlign('center');
-    startBtn.setOrigin(0.5); 
-    startBtn.setVisible(true);
+    startBtn.setText(`${msg}\n\n點擊重新開始`).setAlign('center').setOrigin(0.5).setVisible(true);
 }
 </script>
 </body>

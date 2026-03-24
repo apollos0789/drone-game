@@ -19,63 +19,58 @@ const config = {
 };
 
 let game = new Phaser.Game(config);
-let drone, targetMarker, timerText, scoreText, mask, startBtn;
+let drone, targetMarker, timerText, scoreText, mask, startBtn, resultText;
 let timeLeft, score, isPlaying = false;
 let currentDroneAngle, currentRelativeDir;
+let wrongCount = 0;
 
-function preload() {
-    // 預載音效 (此處使用瀏覽器合成音模擬)
-}
+function preload() {}
 
 function create() {
-    // 1. 繪製背景網格 (教學用參考線)
+    // 1. 繪製背景網格
     let graphics = this.add.graphics();
     graphics.lineStyle(1, 0xeeeeee);
     for(let i=0; i<640; i+=40) graphics.lineBetween(0,i,360,i);
     for(let i=0; i<360; i+=40) graphics.lineBetween(i,0,i,640);
 
-    // 2. 建立新版無人機圖樣容器 (位於上半部)
+    // 2. 建立無人機容器
     drone = this.add.container(180, 220);
+    const bodySize = 60; 
+    const propRadius = 10; 
+    const propOffset = bodySize / 2; 
 
-    // --- 繪製無人機 (四方形與四角圓圈) ---
-    const bodySize = 60; // 四方形機身大小
-    const propRadius = 10; // 圓圈螺旋槳半徑
-    const propOffset = bodySize / 2; // 圓圈相對於中心的偏移量
-
-    // (A) 四方形機身
     let body = this.add.rectangle(0, 0, bodySize, bodySize, 0xecf0f1).setStrokeStyle(3, 0x2d3436);
+    let headPointer = this.add.triangle(10, -42, 0, -10, -10, 8, 10, 8, 0xd63031).setStrokeStyle(1, 0x000000);
+    let propFL = this.add.circle(-propOffset, -propOffset, propRadius, 0xd63031).setStrokeStyle(2, 0x000000); 
+    let propFR = this.add.circle(propOffset, -propOffset, propRadius, 0xd63031).setStrokeStyle(2, 0x000000);  
+    let propBL = this.add.circle(-propOffset, propOffset, propRadius, 0xffffff).setStrokeStyle(2, 0x000000); 
+    let propBR = this.add.circle(propOffset, propOffset, propRadius, 0xffffff).setStrokeStyle(2, 0x000000);  
 
-    // (B) 機頭方向的兩個圓圈 (紅色)
-    let propFL = this.add.circle(-propOffset, -propOffset, propRadius, 0xd63031).setStrokeStyle(2, 0x000000); // 前左
-    let propFR = this.add.circle(propOffset, -propOffset, propRadius, 0xd63031).setStrokeStyle(2, 0x000000);  // 前右
+    drone.add([body, headPointer, propFL, propFR, propBL, propBR]);
 
-    // (C) 機尾方向的兩個圓圈 (白色)
-    let propBL = this.add.circle(-propOffset, propOffset, propRadius, 0xffffff).setStrokeStyle(2, 0x000000); // 後左
-    let propBR = this.add.circle(propOffset, propOffset, propRadius, 0xffffff).setStrokeStyle(2, 0x000000);  // 後右
-
-    // 將所有組件加入容器
-    drone.add([body, propFL, propFR, propBL, propBR]);
-    // ----------------------------------
-
-    // 3. 目標紅點 (指引學員修正方向)
+    // 3. 目標紅點
     targetMarker = this.add.circle(0, -100, 15, 0xff0000).setStrokeStyle(2, 0x000000);
     this.targetPivot = this.add.container(180, 220, [targetMarker]);
 
-    // 4. 中文介面 (完全使用繁體中文)
-    const textStyle = { fontSize: '26px', color: '#000', fontStyle: 'bold', fontFamily: '微軟正黑體' };
+    // 4. 文字介面
+    const textStyle = { fontSize: '24px', color: '#000', fontStyle: 'bold', fontFamily: '微軟正黑體' };
     timerText = this.add.text(20, 20, '時間：30', textStyle);
     scoreText = this.add.text(220, 20, '過關：0/20', textStyle);
 
-    // 5. 虛擬搖桿區 (下半部，控制俯仰與橫滾)
-    createButton(this, 180, 450, '前', 'up');
-    createButton(this, 180, 560, '後', 'down');
-    createButton(this, 80, 505, '左', 'left');
-    createButton(this, 280, 505, '右', 'right');
+    this.add.text(180, 365, '▲ 為機頭朝向', { fontSize: '18px', color: '#636e72', fontStyle: 'bold' }).setOrigin(0.5);
 
-    // 6. 初始白色蒙版與按鈕
+    // 5. 虛擬搖桿
+    createButton(this, 180, 430, '前', 'up');
+    createButton(this, 180, 540, '後', 'down');
+    createButton(this, 80, 485, '左', 'left');
+    createButton(this, 280, 485, '右', 'right');
+
+    // 6. 初始蒙版與按鈕
     mask = this.add.rectangle(180, 320, 360, 640, 0xffffff, 0.95);
-    startBtn = this.add.text(180, 320, '開始練習', { 
-        fontSize: '40px', color: '#fff', backgroundColor: '#d63031', padding: 20, borderRadius: 10
+    resultText = this.add.text(180, 260, '', { fontSize: '24px', color: '#7f8c8d', fontStyle: 'bold', align: 'center' }).setOrigin(0.5).setVisible(false);
+    
+    startBtn = this.add.text(180, 340, '開始練習', { 
+        fontSize: '30px', color: '#fff', backgroundColor: '#d63031', padding: 20, borderRadius: 10, align: 'center' 
     }).setOrigin(0.5).setInteractive();
 
     startBtn.on('pointerdown', () => startGame.call(this));
@@ -84,44 +79,29 @@ function create() {
 function createButton(scene, x, y, label, action) {
     let btn = scene.add.circle(x, y, 45, 0xecf0f1).setStrokeStyle(3, 0x2d3436).setInteractive();
     scene.add.text(x, y, label, { fontSize: '22px', color: '#2d3436', fontStyle: 'bold' }).setOrigin(0.5);
-    
-    btn.on('pointerdown', () => {
-        btn.setFillStyle(0xbdc3c7);
-        checkAnswer.call(scene, action);
-    });
+    btn.on('pointerdown', () => { btn.setFillStyle(0xbdc3c7); checkAnswer.call(scene, action); });
     btn.on('pointerup', () => btn.setFillStyle(0xecf0f1));
 }
 
 function startGame() {
-    score = 0;
-    timeLeft = 30;
-    isPlaying = true;
-    mask.setVisible(false);
-    startBtn.setVisible(false);
+    score = 0; timeLeft = 30; wrongCount = 0; isPlaying = true;
+    mask.setVisible(false); startBtn.setVisible(false); resultText.setVisible(false);
     nextRound.call(this);
 }
 
 function nextRound() {
-    if (score >= 20) return endGame.call(this, "訓練達成！");
-    
-    // 隨機無人機朝向 (0:北, 90:東, 180:南, 270:西)
+    if (score >= 20) return endGame.call(this, "過關！");
     const angles = [0, 90, 180, 270];
     currentDroneAngle = angles[Math.floor(Math.random() * angles.length)];
-    drone.setAngle(currentDroneAngle); // 視覺上旋轉無人機，學員看紅色圓圈判斷
-
-    // 隨機目標相對位置 (相對於機頭方向：0:前, 90:右, 180:後, 270:左)
+    drone.setAngle(currentDroneAngle);
     const relativeAngles = [0, 90, 180, 270];
     currentRelativeDir = relativeAngles[Math.floor(Math.random() * relativeAngles.length)];
-    
-    // 計算絕對顯示角度 = 無人機角度 + 相對角度
     this.targetPivot.setAngle(currentDroneAngle + currentRelativeDir);
-    
     scoreText.setText(`過關：${score}/20`);
 }
 
 function checkAnswer(input) {
     if (!isPlaying) return;
-
     let correct;
     if (currentRelativeDir === 0) correct = 'up';
     else if (currentRelativeDir === 90) correct = 'right';
@@ -130,27 +110,52 @@ function checkAnswer(input) {
 
     if (input === correct) {
         score++;
-        // 此處可整合答對音效
         nextRound.call(this);
     } else {
-        // 此處可整合答錯音效，並停留此關
+        wrongCount++; 
+        // 扣 1 秒邏輯
+        timeLeft = Math.max(0, timeLeft - 1); 
+        // 在時間旁邊跳出 -1
+        showMinusOneAtTimer.call(this);
+
         if (navigator.vibrate) navigator.vibrate(200);
         this.cameras.main.shake(100, 0.01);
     }
+}
+
+function showMinusOneAtTimer() {
+    let minusText = this.add.text(125, 20, '-1', { fontSize: '28px', color: '#d63031', fontStyle: 'bold' });
+    this.tweens.add({
+        targets: minusText,
+        y: 0, alpha: 0, duration: 800,
+        onComplete: () => minusText.destroy()
+    });
+    this.tweens.add({
+        targets: timerText,
+        alpha: 0.5, duration: 50, yoyo: true,
+        onStart: () => timerText.setColor('#d63031'),
+        onComplete: () => timerText.setColor('#000000')
+    });
 }
 
 function update(time, delta) {
     if (isPlaying) {
         timeLeft -= delta / 1000;
         timerText.setText(`時間：${Math.max(0, Math.ceil(timeLeft))}`);
-        if (timeLeft <= 0) endGame.call(this, "訓練超時！");
+        if (timeLeft <= 0) endGame.call(this, "再練！");
     }
 }
 
 function endGame(msg) {
     isPlaying = false;
     mask.setVisible(true);
-    startBtn.setText(msg + "\n點擊重新開始").setVisible(true);
+    resultText.setText(`本次錯誤：${wrongCount} 次`).setVisible(true);
+    
+    // 在更新文字後，強制設定對齊方式與重新置中
+    startBtn.setText(`${msg}\n\n點擊重新開始`);
+    startBtn.setAlign('center');
+    startBtn.setOrigin(0.5); 
+    startBtn.setVisible(true);
 }
 </script>
 </body>

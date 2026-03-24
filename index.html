@@ -24,6 +24,7 @@ let drone, emitter, isPlaying = false;
 let lobbyUI, hoverMenuUI, backBtn, resultMask, startBtn, resultTitle;
 
 const GAME_CENTER_Y = 220; 
+const SAFE_ZONE_RADIUS = 50; 
 
 let targetMarker, targetPivot, timeLeft, score, wrongCount = 0, currentRelativeDir;
 let directionBtns = [];
@@ -43,7 +44,6 @@ function create() {
     pg.generateTexture('p', 4, 4);
     emitter = s.add.particles(0,0,'p', { speed:{min:80,max:250}, scale:{start:1.5,end:0}, lifespan:700, tint:[0xd63031, 0x00b894], emitting:false });
 
-    // --- 機體構造 ---
     drone = s.add.container(180, GAME_CENTER_Y).setVisible(false);
     const pO = 28, pR = 13;
     let fG = s.add.graphics().lineStyle(3, 0x2d3436);
@@ -51,16 +51,9 @@ function create() {
     let cB = s.add.circle(0,0,14,0xf8f9fa).setStrokeStyle(3,0x2d3436);
     let pFL = s.add.circle(-pO,-pO,pR).setStrokeStyle(3,0xd63031);
     let pFR = s.add.circle(pO,-pO,pR).setStrokeStyle(3,0xd63031);
-    
-    // 絕對座標機頭 (10, -42)
     let head = s.add.triangle(10, -42, 0, -10, -10, 8, 10, 8, 0xd63031).setStrokeStyle(1, 0x000000);
-    
-    drone.add([fG, cB, pFL, pFR, 
-               s.add.circle(-pO,pO,pR).setStrokeStyle(3,0xb2bec3), 
-               s.add.circle(pO,pO,pR).setStrokeStyle(3,0xb2bec3), 
-               head]);
+    drone.add([fG, cB, pFL, pFR, s.add.circle(-pO,pO,pR).setStrokeStyle(3,0xb2bec3), s.add.circle(pO,pO,pR).setStrokeStyle(3,0xb2bec3), head]);
 
-    // 選單系統
     lobbyUI = s.add.container(0, 0);
     let titleText = s.add.text(180, 80, '台續特訓中心', {fontSize:'32px', color:'#2d3436', fontStyle:'bold'}).setOrigin(0.5);
     let card1 = s.add.rectangle(180, 230, 280, 120, 0xfdfdfd).setStrokeStyle(4, 0x2d3436).setInteractive();
@@ -109,7 +102,7 @@ function create() {
     targetMarker = s.add.container(0, -95); 
     targetMarker.add([s.add.graphics().lineStyle(4, 0xd63031).strokeRoundedRect(-20,-20,40,40,8), s.add.circle(0,0,4,0xd63031,0.5)]);
     targetPivot = s.add.container(180, GAME_CENTER_Y, [targetMarker]).setVisible(false);
-    safeZone = s.add.circle(180, GAME_CENTER_Y, 70).setStrokeStyle(3, 0xb2bec3).setVisible(false);
+    safeZone = s.add.circle(180, GAME_CENTER_Y, SAFE_ZONE_RADIUS).setStrokeStyle(3, 0xb2bec3).setVisible(false);
     
     createDirectionButtons(s);
     createHoverControls(s);
@@ -134,7 +127,7 @@ function startHoverGame(s, angle) {
     safeZone.setVisible(true); targetPivot.setVisible(false);
     directionBtns.forEach(b => b.setVisible(false));
     joystickBase.setVisible(true); joystickThumb.setVisible(true);
-    windX = (Math.random()-0.5)*1.2; windY = (Math.random()-0.5)*1.2;
+    windX = (Math.random()-0.5)*1.5; windY = (Math.random()-0.5)*1.5;
 }
 
 function createDirectionButtons(s) {
@@ -168,7 +161,7 @@ function enterGame(s, mode) {
     drone.setVisible(true).setPosition(180, GAME_CENTER_Y);
     s.timerText.setVisible(true); s.scoreText.setVisible(true);
     if(mode === 'DIRECTION') {
-        score = 0; timeLeft = 30; wrongCount = 0; targetPivot.setVisible(true);
+        score = 0; timeLeft = 25; wrongCount = 0; targetPivot.setVisible(true);
         directionBtns.forEach(b => b.setVisible(true));
         joystickBase.setVisible(false); joystickThumb.setVisible(false); safeZone.setVisible(false);
         nextDirRound();
@@ -186,7 +179,10 @@ function checkDir(s, input) {
     let correct = ['up', 'right', 'down', 'left'][currentRelativeDir / 90];
     if (input === correct) {
         score++; emitter.emitParticleAt(targetMarker.getWorldTransformMatrix().tx, targetMarker.getWorldTransformMatrix().ty, 15);
-        if (score >= 20) endTraining(s, `特訓成功！\n最終錯誤：${wrongCount} 次`);
+        if (score >= 20) {
+            // 方位特訓成功結算
+            endTraining(s, `特訓成功！\n剩餘時間：${Math.ceil(timeLeft)} 秒\n最終錯誤：${wrongCount} 次`);
+        }
         else nextDirRound();
     } else {
         wrongCount++; timeLeft = Math.max(0, timeLeft - 1);
@@ -196,25 +192,16 @@ function checkDir(s, input) {
     }
 }
 
-// --- 核心修正：結束訓練時隱藏所有進行中元件 ---
 function endTraining(s, msg) { 
     isPlaying = false; 
-    
-    // 隱藏核心物件
     drone.setVisible(false);
     safeZone.setVisible(false);
     targetPivot.setVisible(false);
-    
-    // 隱藏控制項
     joystickBase.setVisible(false);
     joystickThumb.setVisible(false);
     directionBtns.forEach(b => b.setVisible(false));
-    
-    // 隱藏即時資訊文字
     s.timerText.setVisible(false);
     s.scoreText.setVisible(false);
-
-    // 顯示結算
     resultMask.setVisible(true); 
     resultTitle.setVisible(true).setText(msg); 
     startBtn.setVisible(true); 
@@ -228,19 +215,16 @@ function update(time, delta) {
         this.scoreText.setText(`進度：${score}/20`);
         if (timeLeft <= 0) endTraining(this, `時間到！\n答對 ${score} 題\n最終錯誤：${wrongCount} 次`);
     } else {
-        windTimer += delta * 0.001;
+        windTimer += delta * 0.0015;
         let tX = joystickVector.x*Math.cos(drone.rotation) - joystickVector.y*Math.sin(drone.rotation);
         let tY = joystickVector.x*Math.sin(drone.rotation) + joystickVector.y*Math.cos(drone.rotation);
-        droneVelocityX += (windX + Math.sin(windTimer)*0.4 + tX*3.5)*0.02;
-        droneVelocityY += (windY + Math.cos(windTimer*0.7)*0.4 + tY*3.5)*0.02;
+        droneVelocityX += (windX + Math.sin(windTimer)*0.6 + tX*3.5)*0.02;
+        droneVelocityY += (windY + Math.cos(windTimer*0.8)*0.6 + tY*3.5)*0.02;
         drone.x += (droneVelocityX *= 0.985); drone.y += (droneVelocityY *= 0.985);
-        
         if (drone.x < 0 || drone.x > 360 || drone.y < 0 || drone.y > 640) endTraining(this, "機體失聯！\n飛出邊界");
-        
-        if (Phaser.Math.Distance.Between(drone.x, drone.y, 180, GAME_CENTER_Y) < 70) {
+        if (Phaser.Math.Distance.Between(drone.x, drone.y, 180, GAME_CENTER_Y) < SAFE_ZONE_RADIUS) {
             safeZone.setStrokeStyle(5, 0x00b894); hoverTime += delta/1000;
         } else { safeZone.setStrokeStyle(3, 0xd63031); hoverTime = 0; }
-        
         this.timerText.setText(`穩控：${hoverTime.toFixed(1)}s`);
         this.scoreText.setText(`目標：7.0s`);
         if (hoverTime >= 7) endTraining(this, "特訓成功！\n姿態極其穩定");

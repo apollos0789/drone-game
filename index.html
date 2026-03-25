@@ -59,7 +59,10 @@ function create() {
 
     lobbyUI = s.add.container(0, 0).setDepth(50);
     lobbyUI.add(s.add.text(180, 60, '台續特訓中心', {fontSize:'32px', color:'#2d3436', fontStyle:'bold', padding:10}).setOrigin(0.5));
-    lobbyUI.add(s.add.text(180, 615, '本遊戲僅為美國手右手及中國手左手設計 日本手需求請換手XD', {fontSize:'12px', color:'#b2bec3', padding:5}).setOrigin(0.5));
+    lobbyUI.add(s.add.text(180, 580, '本遊戲僅為美國手右手及中國手左手設計 日本手需求請換手XD', {fontSize:'12px', color:'#b2bec3', padding:5}).setOrigin(0.5));
+    
+    // --- 新增版本號 v26.0325 ---
+    lobbyUI.add(s.add.text(355, 625, 'v26.0325', {fontSize:'10px', color:'#b2bec3'}).setOrigin(1, 1));
 
     let menuData = [
         { t1: '🎯 方位識別特訓', t2: '方向感基本功 必練', m: 'DIRECTION', y: 180 },
@@ -193,9 +196,9 @@ function checkDir(s, input) {
             endTraining(s, `🎯 特訓成功！\n本次剩餘：${finalRemain}s\n歷史最佳：${Math.max(finalRemain, historyBest)}s`);
         } else nextDirRound();
     } else {
-        timeLeft -= 1; // 確保扣秒
+        timeLeft -= 1; 
         s.cameras.main.shake(120, 0.01);
-        s.timerText.setColor('#d63031'); // 閃紅反饋
+        s.timerText.setColor('#d63031'); 
         s.time.delayedCall(200, () => s.timerText.setColor('#2d3436'));
         nextDirRound();
     }

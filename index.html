@@ -20,17 +20,19 @@ const config = {
 
 let game = new Phaser.Game(config);
 let currentScene = 'LOBBY'; 
-let drone, emitter, isPlaying = false;
-let lobbyUI, hoverMenuUI, backBtn, resultMask, startBtn, resultTitle;
+let drone, isPlaying = false;
+let lobbyUI, hoverMenuUI, backBtn, resultMask, startBtn, resultTitle, instructionText, countdownText, countdownMask;
 
 const GAME_CENTER_Y = 220; 
-const SAFE_ZONE_RADIUS = 50; 
+const SAFE_ZONE_RADIUS = 75; 
+const TXT_STYLE = { fontSize: '18px', color: '#636e72', fontStyle: 'bold', padding: { top: 10, bottom: 10 } };
 
-let targetMarker, targetPivot, timeLeft, score, wrongCount = 0, currentRelativeDir;
+let targetPivot, timeLeft, score, currentRelativeDir, currentHoverAngle = 0;
 let directionBtns = [];
 let safeZone, hoverTime = 0, windX = 0, windY = 0, windTimer = 0;
 let droneVelocityX = 0, droneVelocityY = 0, joystickVector = { x: 0, y: 0 };
 let joystickBase, joystickThumb;
+let yawSpeed = 0, yawTimer = 0;
 
 function preload() {}
 
@@ -40,11 +42,12 @@ function create() {
     for(let i=0; i<640; i+=40) bgG.lineBetween(0,i,360,i);
     for(let i=0; i<360; i+=40) bgG.lineBetween(i,0,i,640);
 
-    const pg = s.make.graphics({x:0,y:0,add:false}).fillStyle(0xffffff).fillRect(0,0,4,4);
-    pg.generateTexture('p', 4, 4);
-    emitter = s.add.particles(0,0,'p', { speed:{min:80,max:250}, scale:{start:1.5,end:0}, lifespan:700, tint:[0xd63031, 0x00b894], emitting:false });
+    instructionText = s.add.text(180, 365, '▲ 為機頭朝向', TXT_STYLE).setOrigin(0.5).setVisible(false).setDepth(200);
+    
+    countdownMask = s.add.rectangle(180, 320, 360, 640, 0xffffff, 0.5).setDepth(290).setVisible(false);
+    countdownText = s.add.text(180, GAME_CENTER_Y, '', { fontSize: '60px', color: '#d63031', fontStyle: 'bold', padding: 20 }).setOrigin(0.5).setDepth(300).setVisible(false);
 
-    drone = s.add.container(180, GAME_CENTER_Y).setVisible(false);
+    drone = s.add.container(180, GAME_CENTER_Y).setVisible(false).setDepth(10);
     const pO = 28, pR = 13;
     let fG = s.add.graphics().lineStyle(3, 0x2d3436);
     fG.lineBetween(-pO,-pO,pO,pO); fG.lineBetween(-pO,pO,pO,-pO);
@@ -54,98 +57,70 @@ function create() {
     let head = s.add.triangle(10, -42, 0, -10, -10, 8, 10, 8, 0xd63031).setStrokeStyle(1, 0x000000);
     drone.add([fG, cB, pFL, pFR, s.add.circle(-pO,pO,pR).setStrokeStyle(3,0xb2bec3), s.add.circle(pO,pO,pR).setStrokeStyle(3,0xb2bec3), head]);
 
-    lobbyUI = s.add.container(0, 0);
-    let titleText = s.add.text(180, 80, '台續特訓中心', {fontSize:'32px', color:'#2d3436', fontStyle:'bold'}).setOrigin(0.5);
-    let card1 = s.add.rectangle(180, 230, 280, 120, 0xfdfdfd).setStrokeStyle(4, 0x2d3436).setInteractive();
-    let card2 = s.add.rectangle(180, 380, 280, 120, 0xfdfdfd).setStrokeStyle(4, 0x2d3436).setInteractive();
-    
-    lobbyUI.add([titleText, card1, card2,
-        s.add.text(180, 215, '🎯 方位識別特訓', {fontSize:'22px', color:'#2d3436', fontStyle:'bold'}).setOrigin(0.5),
-        s.add.text(180, 245, '方向感基本功', {fontSize:'14px', color:'#636e72'}).setOrigin(0.5),
-        s.add.text(180, 365, '🌪️ 姿態懸停特訓', {fontSize:'22px', color:'#2d3436', fontStyle:'bold'}).setOrigin(0.5),
-        s.add.text(180, 395, '無人機版直線七秒', {fontSize:'14px', color:'#636e72'}).setOrigin(0.5)
-    ]);
+    lobbyUI = s.add.container(0, 0).setDepth(50);
+    lobbyUI.add(s.add.text(180, 60, '台續特訓中心', {fontSize:'32px', color:'#2d3436', fontStyle:'bold', padding:10}).setOrigin(0.5));
+    lobbyUI.add(s.add.text(180, 615, '本遊戲僅為美國手右手及中國手左手設計 日本手需求請換手XD', {fontSize:'12px', color:'#b2bec3', padding:5}).setOrigin(0.5));
 
-    card1.on('pointerdown', () => enterGame(s, 'DIRECTION'));
-    card2.on('pointerdown', () => showHoverMenu(s));
-
-    hoverMenuUI = s.add.container(0, 0).setVisible(false);
-    let hTitle = s.add.text(180, 140, '選擇機頭朝向', {fontSize:'24px', color:'#2d3436', fontStyle:'bold'}).setOrigin(0.5);
-    hoverMenuUI.add(hTitle);
-
-    const menuCenterX = 180, menuCenterY = 320, btnSize = 90;
-    const opts = [
-        {l:'機頭朝前', a:0, x:0, y:-100, c:0xd63031},
-        {l:'機頭朝後', a:180, x:0, y:100, c:0x00b894},
-        {l:'機頭朝左', a:270, x:-100, y:0, c:0x2d3436},
-        {l:'機頭朝右', a:90, x:100, y:0, c:0x2d3436},
-        {l:'隨機', a:-1, x:0, y:0, c:0x636e72}
+    let menuData = [
+        { t1: '🎯 方位識別特訓', t2: '方向感基本功 必練', m: 'DIRECTION', y: 180 },
+        { t1: '🌪️ 姿態懸停特訓', t2: '懸停七秒 挑戰極限', m: 'HOVER_MENU', y: 310 },
+        { t1: '👹 魔王懸停挑戰', t2: '魔王是不會被打敗的', m: 'DYNAMIC', y: 440 }
     ];
 
-    opts.forEach(o => {
-        let btn = s.add.rectangle(menuCenterX + o.x, menuCenterY + o.y, btnSize, btnSize, o.c, 0.1).setStrokeStyle(2, o.c).setInteractive();
-        let txt = s.add.text(menuCenterX + o.x, menuCenterY + o.y, o.l, {fontSize:'15px', color:o.c, fontStyle:'bold'}).setOrigin(0.5);
-        btn.on('pointerdown', () => {
-            hoverMenuUI.setVisible(false);
-            let finalAngle = o.a === -1 ? [0,90,180,270][Math.floor(Math.random()*4)] : o.a;
-            startHoverGame(s, finalAngle);
-        });
-        hoverMenuUI.add([btn, txt]);
+    menuData.forEach(d => {
+        let card = s.add.rectangle(180, d.y, 280, 100, 0xfdfdfd).setStrokeStyle(4, 0x2d3436).setInteractive();
+        lobbyUI.add([card, 
+            s.add.text(180, d.y - 15, d.t1, {fontSize:'20px', color:'#2d3436', fontStyle:'bold', padding:5}).setOrigin(0.5),
+            s.add.text(180, d.y + 15, d.t2, {fontSize:'13px', color:'#636e72', padding:5}).setOrigin(0.5)
+        ]);
+        card.on('pointerdown', () => d.m === 'HOVER_MENU' ? showHoverMenu(s) : enterGame(s, d.m));
     });
 
-    backBtn = s.add.text(15, 20, '↩ 返回', {fontSize:'14px', color:'#fff', backgroundColor:'#2d3436', padding:8}).setInteractive().setVisible(false);
+    hoverMenuUI = s.add.container(0, 0).setVisible(false).setDepth(60);
+    hoverMenuUI.add(s.add.text(180, 100, '選擇機頭朝向', {fontSize:'24px', color:'#2d3436', fontStyle:'bold', padding:10}).setOrigin(0.5));
+    const opts = [{l:'機頭朝前', a:0, x:180, y:210}, {l:'機頭朝後', a:180, x:180, y:430}, {l:'機頭朝左', a:270, x:80, y:320}, {l:'機頭朝右', a:90, x:280, y:320}, {l:'隨機', a:-1, x:180, y:320}];
+    opts.forEach(o => {
+        let btn = s.add.rectangle(o.x, o.y, 90, 90, 0x2d3436, 0.05).setStrokeStyle(2, 0x2d3436).setInteractive();
+        btn.on('pointerdown', () => { hoverMenuUI.setVisible(false); currentHoverAngle = o.a; enterGame(s, 'HOVER'); });
+        hoverMenuUI.add([btn, s.add.text(o.x, o.y, o.l, {fontSize:'16px', color:'#2d3436', padding:5}).setOrigin(0.5)]);
+    });
+
+    backBtn = s.add.text(15, 20, '↩ 返回', {fontSize:'14px', color:'#fff', backgroundColor:'#2d3436', padding:10}).setInteractive().setVisible(false).setDepth(100);
     backBtn.on('pointerdown', () => location.reload());
 
-    this.timerText = s.add.text(345, 20, '', {fontSize:'22px', color:'#2d3436', fontStyle:'bold'}).setOrigin(1, 0).setVisible(false);
-    this.scoreText = s.add.text(345, 52, '', {fontSize:'16px', color:'#636e72', fontStyle:'bold'}).setOrigin(1, 0).setVisible(false);
+    this.timerText = s.add.text(345, 20, '', {fontSize:'22px', color:'#2d3436', fontStyle:'bold', padding:5}).setOrigin(1, 0).setVisible(false).setDepth(100);
+    this.scoreText = s.add.text(345, 52, '', {fontSize:'16px', color:'#636e72', fontStyle:'bold', padding:5}).setOrigin(1, 0).setVisible(false).setDepth(100);
 
-    targetMarker = s.add.container(0, -95); 
-    targetMarker.add([s.add.graphics().lineStyle(4, 0xd63031).strokeRoundedRect(-20,-20,40,40,8), s.add.circle(0,0,4,0xd63031,0.5)]);
-    targetPivot = s.add.container(180, GAME_CENTER_Y, [targetMarker]).setVisible(false);
+    targetPivot = s.add.container(180, GAME_CENTER_Y, [s.add.container(0, -95).add([s.add.graphics().lineStyle(4, 0xd63031).strokeRoundedRect(-20,-20,40,40,8), s.add.circle(0,0,4,0xd63031,0.5)])]).setVisible(false);
     safeZone = s.add.circle(180, GAME_CENTER_Y, SAFE_ZONE_RADIUS).setStrokeStyle(3, 0xb2bec3).setVisible(false);
     
     createDirectionButtons(s);
     createHoverControls(s);
 
-    resultMask = s.add.rectangle(180, 320, 360, 640, 0xffffff, 0.9).setVisible(false);
-    resultTitle = s.add.text(180, 250, '', {fontSize:'24px', color:'#2d3436', fontStyle:'bold', align:'center'}).setOrigin(0.5).setVisible(false);
-    startBtn = s.add.text(180, 380, '再次訓練', {fontSize:'24px', color:'#fff', backgroundColor:'#d63031', padding:15}).setOrigin(0.5).setInteractive().setVisible(false);
+    resultMask = s.add.rectangle(180, 320, 360, 640, 0xffffff, 0.95).setVisible(false).setDepth(400);
+    resultTitle = s.add.text(180, 260, '', {fontSize:'22px', color:'#2d3436', fontStyle:'bold', align:'center', lineSpacing:12, padding:15}).setOrigin(0.5).setVisible(false).setDepth(401);
+    startBtn = s.add.text(180, 420, '再次訓練', {fontSize:'24px', color:'#fff', backgroundColor:'#d63031', padding:15}).setOrigin(0.5).setInteractive().setVisible(false).setDepth(401);
     startBtn.on('pointerdown', () => { resultMask.setVisible(false); resultTitle.setVisible(false); startBtn.setVisible(false); enterGame(s, currentScene); });
 }
 
-function showHoverMenu(s) {
-    lobbyUI.setVisible(false);
-    hoverMenuUI.setVisible(true);
-    backBtn.setVisible(true);
-}
-
-function startHoverGame(s, angle) {
-    currentScene = 'HOVER'; isPlaying = true;
-    drone.setVisible(true).setPosition(180, GAME_CENTER_Y).setAngle(angle);
-    s.timerText.setVisible(true); s.scoreText.setVisible(true);
-    hoverTime = 0; windTimer = 0; droneVelocityX = 0; droneVelocityY = 0;
-    safeZone.setVisible(true); targetPivot.setVisible(false);
-    directionBtns.forEach(b => b.setVisible(false));
-    joystickBase.setVisible(true); joystickThumb.setVisible(true);
-    windX = (Math.random()-0.5)*1.5; windY = (Math.random()-0.5)*1.5;
-}
+function showHoverMenu(s) { lobbyUI.setVisible(false); hoverMenuUI.setVisible(true); backBtn.setVisible(true); }
 
 function createDirectionButtons(s) {
     const bData = [{l:'前',a:'up',x:180,y:440},{l:'後',a:'down',x:180,y:550},{l:'左',a:'left',x:75,y:495},{l:'右',a:'right',x:285,y:495}];
     bData.forEach(b => {
-        let c = s.add.circle(b.x, b.y, 45, 0xecf0f1).setStrokeStyle(3, 0x2d3436).setInteractive().setVisible(false);
-        let t = s.add.text(b.x, b.y, b.l, {fontSize:'22px', color:'#2d3436', fontStyle:'bold'}).setOrigin(0.5).setVisible(false);
+        let c = s.add.circle(b.x, b.y, 45, 0xecf0f1).setStrokeStyle(3, 0x2d3436).setInteractive().setVisible(false).setDepth(80);
+        let t = s.add.text(b.x, b.y, b.l, {fontSize:'22px', color:'#2d3436', fontStyle:'bold', padding:5}).setOrigin(0.5).setVisible(false).setDepth(81);
         c.on('pointerdown', () => { if(isPlaying && currentScene==='DIRECTION') checkDir(s, b.a); });
         directionBtns.push(c, t);
     });
 }
 
 function createHoverControls(s) {
-    joystickBase = s.add.circle(180, 510, 55, 0xecf0f1).setStrokeStyle(4, 0x2d3436).setAlpha(0.6).setVisible(false);
-    joystickThumb = s.add.circle(180, 510, 28, 0x2d3436).setAlpha(0.8).setInteractive().setVisible(false);
+    joystickBase = s.add.circle(180, 510, 55, 0xecf0f1).setStrokeStyle(4, 0x2d3436).setAlpha(0.6).setVisible(false).setDepth(80);
+    joystickThumb = s.add.circle(180, 510, 28, 0x2d3436).setAlpha(0.8).setInteractive().setVisible(false).setDepth(81);
     s.input.setDraggable(joystickThumb);
     s.input.on('drag', (p, obj, dx, dy) => {
-        if (!isPlaying || currentScene !== 'HOVER') return;
+        if (!isPlaying || currentScene === 'DIRECTION') return;
         let d = Phaser.Math.Distance.Between(180, 510, dx, dy);
         if (d <= 55) { obj.x = dx; obj.y = dy; }
         else { let a = Phaser.Math.Angle.Between(180, 510, dx, dy); obj.x = 180 + Math.cos(a)*55; obj.y = 510 + Math.sin(a)*55; }
@@ -154,18 +129,51 @@ function createHoverControls(s) {
     s.input.on('dragend', (p, obj) => { s.tweens.add({targets:obj,x:180,y:510,duration:100}); joystickVector={x:0,y:0}; });
 }
 
+function startCountdown(s, callback) {
+    isPlaying = false;
+    countdownMask.setVisible(true);
+    countdownText.setText('READY').setVisible(true);
+    s.time.delayedCall(1000, () => {
+        countdownText.setText('GO!');
+        s.time.delayedCall(500, () => {
+            countdownText.setVisible(false);
+            countdownMask.setVisible(false);
+            isPlaying = true;
+            callback();
+        });
+    });
+}
+
 function enterGame(s, mode) {
-    if(mode === 'HOVER') { showHoverMenu(s); return; }
-    currentScene = mode; isPlaying = true;
+    currentScene = mode;
     lobbyUI.setVisible(false); backBtn.setVisible(true);
-    drone.setVisible(true).setPosition(180, GAME_CENTER_Y);
+    drone.setVisible(true).setPosition(180, GAME_CENTER_Y).setAngle(0);
+    instructionText.setVisible(true);
     s.timerText.setVisible(true); s.scoreText.setVisible(true);
+    
     if(mode === 'DIRECTION') {
-        score = 0; timeLeft = 25; wrongCount = 0; targetPivot.setVisible(true);
+        score = 0; timeLeft = 25; 
+        targetPivot.setVisible(true);
         directionBtns.forEach(b => b.setVisible(true));
-        joystickBase.setVisible(false); joystickThumb.setVisible(false); safeZone.setVisible(false);
+        joystickBase.setVisible(false); joystickThumb.setVisible(false);
         nextDirRound();
+    } else {
+        safeZone.setVisible(true);
+        joystickBase.setVisible(true); joystickThumb.setVisible(true);
+        if(mode === 'HOVER') {
+            let a = currentHoverAngle === -1 ? [0,90,180,270][Math.floor(Math.random()*4)] : currentHoverAngle;
+            drone.setAngle(a);
+        }
     }
+
+    startCountdown(s, () => {
+        if(mode !== 'DIRECTION') {
+            let force = (mode === 'DYNAMIC') ? 0.35 : 1.2; 
+            windX = (Math.random()-0.5) * force; windY = (Math.random()-0.5) * force;
+            hoverTime = 0; droneVelocityX = 0; droneVelocityY = 0;
+            if(mode === 'DYNAMIC') { yawSpeed = 0; yawTimer = 0; }
+        }
+    });
 }
 
 function nextDirRound() {
@@ -178,56 +186,70 @@ function nextDirRound() {
 function checkDir(s, input) {
     let correct = ['up', 'right', 'down', 'left'][currentRelativeDir / 90];
     if (input === correct) {
-        score++; emitter.emitParticleAt(targetMarker.getWorldTransformMatrix().tx, targetMarker.getWorldTransformMatrix().ty, 15);
+        score++;
         if (score >= 20) {
-            // 方位特訓成功結算
-            endTraining(s, `特訓成功！\n剩餘時間：${Math.ceil(timeLeft)} 秒\n最終錯誤：${wrongCount} 次`);
-        }
-        else nextDirRound();
+            let finalRemain = Math.ceil(timeLeft), historyBest = localStorage.getItem('fpv_best_remain') || 0;
+            if (finalRemain > historyBest) localStorage.setItem('fpv_best_remain', finalRemain);
+            endTraining(s, `🎯 特訓成功！\n本次剩餘：${finalRemain}s\n歷史最佳：${Math.max(finalRemain, historyBest)}s`);
+        } else nextDirRound();
     } else {
-        wrongCount++; timeLeft = Math.max(0, timeLeft - 1);
-        let m1 = s.add.text(320, 20, '-1s', {fontSize:'24px', color:'#d63031', fontStyle:'bold'}).setOrigin(1,0);
-        s.tweens.add({targets:m1, y:0, alpha:0, duration:800, onComplete:()=>m1.destroy()});
-        s.cameras.main.shake(100, 0.01);
+        timeLeft -= 1; // 確保扣秒
+        s.cameras.main.shake(120, 0.01);
+        s.timerText.setColor('#d63031'); // 閃紅反饋
+        s.time.delayedCall(200, () => s.timerText.setColor('#2d3436'));
+        nextDirRound();
     }
 }
 
 function endTraining(s, msg) { 
-    isPlaying = false; 
-    drone.setVisible(false);
-    safeZone.setVisible(false);
-    targetPivot.setVisible(false);
-    joystickBase.setVisible(false);
-    joystickThumb.setVisible(false);
+    isPlaying = false; drone.setVisible(false); instructionText.setVisible(false);
+    safeZone.setVisible(false); targetPivot.setVisible(false);
+    joystickBase.setVisible(false); joystickThumb.setVisible(false);
     directionBtns.forEach(b => b.setVisible(false));
-    s.timerText.setVisible(false);
-    s.scoreText.setVisible(false);
-    resultMask.setVisible(true); 
-    resultTitle.setVisible(true).setText(msg); 
-    startBtn.setVisible(true); 
+    s.timerText.setVisible(false); s.scoreText.setVisible(false);
+    resultMask.setVisible(true); resultTitle.setVisible(true).setText(msg); startBtn.setVisible(true); 
 }
 
 function update(time, delta) {
     if (!isPlaying) return;
     if (currentScene === 'DIRECTION') {
         timeLeft -= delta/1000;
-        this.timerText.setText(`剩餘：${Math.ceil(timeLeft)}s`);
+        this.timerText.setText(`剩餘：${Math.max(0, Math.ceil(timeLeft))}s`);
         this.scoreText.setText(`進度：${score}/20`);
-        if (timeLeft <= 0) endTraining(this, `時間到！\n答對 ${score} 題\n最終錯誤：${wrongCount} 次`);
+        if (timeLeft <= 0) endTraining(this, `時間到！\n答對 ${score} 題`);
     } else {
-        windTimer += delta * 0.0015;
+        windTimer += delta * 0.0008;
         let tX = joystickVector.x*Math.cos(drone.rotation) - joystickVector.y*Math.sin(drone.rotation);
         let tY = joystickVector.x*Math.sin(drone.rotation) + joystickVector.y*Math.cos(drone.rotation);
-        droneVelocityX += (windX + Math.sin(windTimer)*0.6 + tX*3.5)*0.02;
-        droneVelocityY += (windY + Math.cos(windTimer*0.8)*0.6 + tY*3.5)*0.02;
+        droneVelocityX += (windX + Math.sin(windTimer)*0.15 + tX*3.5)*0.02;
+        droneVelocityY += (windY + Math.cos(windTimer*0.7)*0.15 + tY*3.5)*0.02;
         drone.x += (droneVelocityX *= 0.985); drone.y += (droneVelocityY *= 0.985);
-        if (drone.x < 0 || drone.x > 360 || drone.y < 0 || drone.y > 640) endTraining(this, "機體失聯！\n飛出邊界");
-        if (Phaser.Math.Distance.Between(drone.x, drone.y, 180, GAME_CENTER_Y) < SAFE_ZONE_RADIUS) {
+        
+        if(currentScene === 'DYNAMIC') {
+            yawTimer -= delta;
+            if(yawTimer <= 0) { yawSpeed = (Math.random()-0.5) * 0.8; yawTimer = 2000 + Math.random()*3000; }
+            drone.angle += yawSpeed;
+        }
+
+        if (drone.x < 0 || drone.x > 360 || drone.y < 0 || drone.y > 640) { endTraining(this, "機體失聯！\n飛出邊界"); return; }
+
+        let dist = Phaser.Math.Distance.Between(drone.x, drone.y, 180, GAME_CENTER_Y);
+        if (dist < SAFE_ZONE_RADIUS) {
             safeZone.setStrokeStyle(5, 0x00b894); hoverTime += delta/1000;
-        } else { safeZone.setStrokeStyle(3, 0xd63031); hoverTime = 0; }
+        } else {
+            safeZone.setStrokeStyle(3, 0xd63031);
+            if (currentScene === 'DYNAMIC' || (currentScene === 'HOVER' && hoverTime >= 7)) {
+                let key = currentScene === 'DYNAMIC' ? 'hover_best_dynamic' : `hover_best_${currentHoverAngle}`;
+                let best = parseFloat(localStorage.getItem(key) || 0);
+                let cur = parseFloat(hoverTime.toFixed(1));
+                if(cur > best) localStorage.setItem(key, cur);
+                endTraining(this, currentScene === 'DYNAMIC' ? `👹 魔王戰結算\n堅持了：${cur}s\n紀錄：${Math.max(cur, best)}s` : `🌪️ 結算\n本次懸停：${cur}s\n歷史最佳：${Math.max(cur, best)}s`);
+                return;
+            }
+            if(currentScene === 'HOVER') hoverTime = 0; 
+        }
         this.timerText.setText(`穩控：${hoverTime.toFixed(1)}s`);
-        this.scoreText.setText(`目標：7.0s`);
-        if (hoverTime >= 7) endTraining(this, "特訓成功！\n姿態極其穩定");
+        this.scoreText.setText(currentScene==='DYNAMIC' ? '🔥 魔王挑戰中' : (hoverTime < 7 ? '目標：7.0s' : '🔥 挑戰極限'));
     }
 }
 //Made by 吳啓弘(小吳)
